@@ -3,9 +3,10 @@ import torch.nn as nn
 from torch.optim import Adam
 from tqdm import tqdm
 import numpy as np
-from sklearn.metrics import f1_score, accuracy_score
+from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
 from typing import Dict, List
 import matplotlib.pyplot as plt
+import seaborn as sns
 from datetime import datetime
 import os
 from config import Config
@@ -18,6 +19,7 @@ class Trainer:
         self.device = torch.device(config.DEVICE)
         self.model.to(self.device)
         
+        # Simple uniform class weights (could be improved if dataset is imbalanced)
         class_weights = torch.ones(config.NUM_CLASSES, device=self.device)
         self.criterion = nn.CrossEntropyLoss(weight=class_weights)
         
@@ -50,6 +52,7 @@ class Trainer:
         
         plt.figure(figsize=(15, 6))
         
+        # Plot Loss
         plt.subplot(1, 2, 1)
         plt.plot(epochs, train_loss, 'b-', label='Training Loss')
         plt.plot(epochs, val_loss, 'r-', label='Validation Loss')
@@ -59,6 +62,7 @@ class Trainer:
         plt.legend()
         plt.grid(True)
         
+        # Plot Accuracy
         plt.subplot(1, 2, 2)
         plt.plot(epochs, train_acc, 'b-', label='Training Accuracy')
         plt.plot(epochs, val_acc, 'r-', label='Validation Accuracy')
@@ -93,9 +97,7 @@ class Trainer:
             loss = self.criterion(outputs, labels)
             
             loss.backward()
-            
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.GRADIENT_CLIP)
-            
             self.optimizer.step()
             
             total_loss += loss.item()
@@ -161,6 +163,7 @@ class Trainer:
                 'val': val_metrics
             })
             
+            # Check for best validation F1
             if val_metrics['f1'] > self.best_val_f1:
                 self.best_val_f1 = val_metrics['f1']
                 self.patience_counter = 0
@@ -179,3 +182,46 @@ class Trainer:
         
         self.plot_training_history(history)
         return history
+
+    def get_predictions(self, data_loader):
+        """
+        Return all predictions and true labels for the given DataLoader.
+        """
+        self.model.eval()
+        all_preds = []
+        all_labels = []
+        
+        with torch.no_grad():
+            for batch in data_loader:
+                embeddings = batch['embeddings'].to(self.device)
+                labels = batch['label'].to(self.device)
+                
+                outputs = self.model(embeddings)
+                preds = torch.argmax(outputs, dim=1).cpu().numpy()
+                all_preds.extend(preds)
+                all_labels.extend(labels.cpu().numpy())
+        
+        return all_preds, all_labels
+
+    def plot_confusion_matrix(self, y_true, y_pred, emotion_labels, title="Confusion Matrix"):
+        """
+        Plot and show a confusion matrix given true/pred labels and class names.
+        """
+        cm = confusion_matrix(y_true, y_pred)
+        
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(
+            cm, 
+            annot=True, 
+            fmt='d', 
+            cmap='Blues', 
+            xticklabels=emotion_labels, 
+            yticklabels=emotion_labels
+        )
+        plt.title(title)
+        plt.xlabel('Predicted Label')
+        plt.ylabel('True Label')
+        plt.tight_layout()
+        
+        plt.show()
+        plt.close()
